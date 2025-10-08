@@ -745,14 +745,14 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
         }
         for (int load_stage = 0; load_stage<n_stages; load_stage++)
         {
-            wait(bar + STAGES + (load_stage%STAGES), p);
-            if ((load_stage%STAGES) == STAGES-1)
-                p^=1;
             const int off = load_stage * block_shape[0];
             int smem_stage = load_stage%STAGES;
             int i = (threadIdx.x)*TO;
             int col = off + i%BK;
             int swizzled = i^((i&(S_MASK<<S_BITS))>>S_BITS);
+            wait(bar + STAGES + (load_stage%STAGES), p);
+            if ((load_stage%STAGES) == STAGES-1)
+                p^=1;
             for(int r = 0; r < X_IT; r += 1)
             {
                 int row = tsrc[r];
