@@ -665,14 +665,14 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
     constexpr int block_shape[2] = {128, 128};
 
     const fp8* exp_w = w + exp_idx * K * N;
-    const fp8* exp_w2 = w2 + exp_idx * K * N;
+
+    const int K2 = N/2;
+    const int N2 = K;
+    const fp8* exp_w2 = w2 + exp_idx * K2 * N2;
     const int lane_id = threadIdx.x%32;
     const bool is_producer = threadIdx.x < PRODUCER_THREADS;
     const int warp_id = is_producer ? threadIdx.x/32 : (threadIdx.x-PRODUCER_THREADS)/32;
     const int w_row = warpN * BN + (lane_id>>2);
-
-    const int K2 = N/2;
-    const int N2 = K;
 
     constexpr int BK2 = WN*BN/2;
     constexpr int BN2 = BK*2;
@@ -810,11 +810,15 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
             arrive(&bar[STAGES + i]);
 
 
+        int smem_stage = 0;
         for (int compute_stage = 0; compute_stage < n_stages_up; compute_stage += 1)
         {
-            wait(bar + (compute_stage%STAGES), p);
-            if ((compute_stage%STAGES) == STAGES-1)
+            if (smem_stage == STAGES)
+            {
                 p^=1;
+                smem_stage = 0;
+            }
+            wait(bar + smem_stage, p);
 
             const int scale_cols_x = K/block_shape[1];
             const int scale_rows_w = N/block_shape[1];
@@ -839,8 +843,8 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
             warpgroup_arrive();
             for(int tn = 0; tn<TN; tn++)
             {
-                fp8* sw = s.w + (compute_stage%STAGES)*WS + (warp_id/4)*(BN*4)*BK + tn*64*BK;
-                fp8* sx = s.x + (compute_stage%STAGES)*XS;
+                fp8* sw = s.w + smem_stage*WS + (warp_id/4)*(BN*4)*BK + tn*64*BK;
+                fp8* sx = s.x + smem_stage*XS;
                 wgmma<1,1,1, BM>(tile_acc[tn], sw, sx);
                 wgmma<1,1,1, BM>(tile_acc[tn], sw+1*32, sx+1*32);
                 wgmma<1,1,1, BM>(tile_acc[tn], sw+2*32, sx+2*32);
@@ -848,7 +852,7 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
             }
             warpgroup_commit_batch();
             warpgroup_wait();
-            arrive(bar + STAGES + (compute_stage%STAGES));
+            arrive(bar + STAGES + smem_stage);
 
             for(int tm = 0; tm<TM; tm++)
             {
@@ -867,6 +871,7 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
                     f_acc[tn][tm][3] += scale_w[1] * x_sc * tile_acc[tn][tm][3];
                 }
             }
+            smem_stage++;
         }
         __syncthreads();
         smem_down<STAGES, WN, BM, BK, BN>& s_d = *reinterpret_cast<smem_down<STAGES, WN, BM, BK, BN>*>(sh);
@@ -947,9 +952,12 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
 
         for (int compute_stage = 0; compute_stage < n_stages_down; compute_stage += 1)
         {
-            wait(bar + (compute_stage%STAGES), p);
-            if ((compute_stage%STAGES) == STAGES-1)
+            if (smem_stage == STAGES)
+            {
                 p^=1;
+                smem_stage = 0;
+            }
+            wait(bar + smem_stage, p);
 
             const int scale_rows_w = N2/block_shape[1];
             const int scale_cols_w = K2/block_shape[0];
@@ -967,13 +975,13 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
             {
                 for(int tn = 0; tn<TN; tn++)
                 {
-                    fp8* sw = s.w + (compute_stage%STAGES)*WS + tn2*64*BK2;
+                    fp8* sw = s.w + smem_stage*WS + tn2*64*BK2;
                     wgmma<1,1,1, BM>(tile_acc[tn2][tn], sw + (tn*32), sx + (tn*32));
                 }
             }
             warpgroup_commit_batch();
             warpgroup_wait();
-            arrive(bar + STAGES + (compute_stage%STAGES));
+            arrive(bar + STAGES + smem_stage);
             // ATOMIC ADD OUTPUT HERE
             for(int tn2 = 0; tn2<TN2; tn2++)
             {
@@ -984,6 +992,7 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
                     }
                 }
             }
+            smem_stage++;
 
             // for(int tm = 0; tm<TM; tm++)
             // {
