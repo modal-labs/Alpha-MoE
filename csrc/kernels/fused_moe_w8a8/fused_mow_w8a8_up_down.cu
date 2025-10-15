@@ -32,21 +32,23 @@ __device__ __forceinline__ uint64_t matrix_descriptor_encode(uint64_t x) {
     return (((x) & 0x3FFFF) >> 4);
 }
 
-template <int COL_BITS, int VAL_BITS = 4, int ROW_BITS = 3>
+template <int BITS, int BASE = 4, int SHIFT = 3>
 __device__ __forceinline__ int32_t swizzle(const int32_t i)
 {
-    constexpr uint32_t S_MASK = 0b111 << VAL_BITS;
-    return i^((i&(S_MASK<<COL_BITS))>>COL_BITS);
+    if constexpr(BITS == 0)
+        return i;
+    constexpr uint32_t S_MASK = ((1 << BITS) - 1) << (BASE + SHIFT);
+    return i^((i&S_MASK)>>SHIFT);
 }
 
 // Descriptor for a shared memory matrix.
 // Implementation is derived from PTX guide: https://docs.nvidia.com/cuda/parallel-thread-execution/#matrix-descriptor-format
-template<int SDO, int LDO = 1, int64_t S_MODE = 1>
-__device__ __forceinline__ uint64_t make_smem_desc(fp8* ptr) {
+template<int SDO, int LDO, uint64_t S_MODE>
+__device__ __forceinline__ uint64_t make_smem_descriptor(fp8* ptr) {
     // Convert shared memory pointer to integer
     uint32_t addr = static_cast<uint32_t>(__cvta_generic_to_shared(ptr));
     uint64_t desc = matrix_descriptor_encode(addr);
-    desc |= matrix_descriptor_encode((uint64_t)LDO) << 16;
+    desc |= ((uint64_t)LDO) << 16;
     desc |= ((uint64_t)SDO) << 32;
     // I don't think we need this anymore
     desc |= (((uint64_t)addr >> 0x7) & 0x7) << 49;
@@ -447,11 +449,11 @@ __device__ void wgmma128(float d[16][4], uint64_t desc_a, uint64_t desc_b)
             "n"(int32_t(ScaleB)));
 }
 
-template<int ScaleD, int ScaleA, int ScaleB, int BM, int SDO_A = 64, int LDO_A = 1, int SDO_B = 64, int LDO_B = 1, int S_MODE_A = 1, int S_MODE_B = 1>
+template<int ScaleD, int ScaleA, int ScaleB, int BM, int SDO_A, int LDO_A, int SDO_B, int LDO_B, int S_MODE_A, int S_MODE_B>
 __device__ void wgmma(float d[BM/8][4], fp8* sA, fp8* sB)
 {
-    uint64_t desc_a = make_smem_desc<SDO_A, LDO_A, S_MODE_A>(&sA[0]);
-    uint64_t desc_b = make_smem_desc<SDO_B, LDO_B, S_MODE_B>(&sB[0]);
+    uint64_t desc_a = make_smem_descriptor<SDO_A, LDO_A, S_MODE_A>(&sA[0]);
+    uint64_t desc_b = make_smem_descriptor<SDO_B, LDO_B, S_MODE_B>(&sB[0]);
 
     if constexpr (BM == 8)
         wgmma8<ScaleD, ScaleA, ScaleB>(d, desc_a, desc_b);
@@ -606,8 +608,8 @@ struct smem_up
 template<int STAGES, int WN, int BM, int BK, int BN>
 struct smem_down
 {
-    alignas(1024) fp8 w[STAGES*BK*WN*BN];
-    alignas(1024) fp8 x[BM*BN/2];
+    alignas(1024) fp8 w[STAGES*WN*BK*BN];
+    alignas(1024) fp8 x[BM*WN*BN/2];
 };
 
 
@@ -646,8 +648,8 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
     constexpr uint32_t S_BITS_UP = 3;
     constexpr uint32_t S_MODE_UP = 1;
 
-    constexpr uint32_t S_BITS_DOWN = 3;
-    constexpr uint32_t S_MODE_DOWN = 1;
+    constexpr uint32_t S_BITS_DOWN = 1;
+    constexpr uint32_t S_MODE_DOWN = 3;
 
     const int K2 = N/2;
     const int N2 = K;
@@ -760,20 +762,21 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
                 smem_stage = 0;
             }
             const int off = load_stage * block_shape[0];
-            int i = (threadIdx.x)*TO;
-            int row = load_stage*BN2 + i/BK2;
-            int col = blockIdx.x*BK2 + i%BK2;
-            int swizzled = swizzle<S_BITS_DOWN>(i);
             wait(bar + STAGES + smem_stage, p);
             for(int r = 0; r < W_IT; r += 1)
             {
+                int i = (threadIdx.x)*TO + r*PRODUCER_THREADS*TO;
+                int row = load_stage*BN2 + i/BK2;
+                int col = blockIdx.x*BK2 + i%BK2;
+                int swizzled = swizzle<S_BITS_DOWN>(i);
                 uint32_t sm = __cvta_generic_to_shared(s.w + smem_stage*WS + swizzled);
                 CP_ASYNC_CG(sm, reinterpret_cast<const float4*>(exp_w2 + row*K2 + col), TB);
-                i += PRODUCER_THREADS*TO;
-                swizzled += PRODUCER_THREADS*TO;
-                row += PRODUCER_THREADS*TO/BK;
+                // i += PRODUCER_THREADS*TO;
+                // swizzled += PRODUCER_THREADS*TO;
+                // row += PRODUCER_THREADS*TO/BK2;
             }
             cp_async_mbarrier_arrive(bar + smem_stage);
+            __syncthreads();
             smem_stage++;
         }
     }
@@ -824,16 +827,16 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
 
 
             float tile_acc[TN][TM][4];
-            memset(tile_acc, 0, sizeof(f_acc));
+            memset(tile_acc, 0, sizeof(tile_acc));
             warpgroup_arrive();
             for(int tn = 0; tn<TN; tn++)
             {
                 fp8* sw = s.w + smem_stage*WS + (warp_id/4)*(BN*4)*BK + tn*64*BK;
                 fp8* sx = s.x + smem_stage*XS;
-                wgmma<1,1,1, BM, 64, 1, 64, 1>(tile_acc[tn], sw, sx);
-                wgmma<1,1,1, BM, 64, 1, 64, 1>(tile_acc[tn], sw+1*32, sx+1*32);
-                wgmma<1,1,1, BM, 64, 1, 64, 1>(tile_acc[tn], sw+2*32, sx+2*32);
-                wgmma<1,1,1, BM, 64, 1, 64, 1>(tile_acc[tn], sw+3*32, sx+3*32);
+                wgmma<1,1,1, BM, 64, 1, 64, 1, 1, 1>(tile_acc[tn], sw, sx);
+                wgmma<1,1,1, BM, 64, 1, 64, 1, 1, 1>(tile_acc[tn], sw+1*32, sx+1*32);
+                wgmma<1,1,1, BM, 64, 1, 64, 1, 1, 1>(tile_acc[tn], sw+2*32, sx+2*32);
+                wgmma<1,1,1, BM, 64, 1, 64, 1, 1, 1>(tile_acc[tn], sw+3*32, sx+3*32);
             }
             warpgroup_commit_batch();
             warpgroup_wait();
@@ -865,10 +868,6 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
         {
             for(int tm = 0; tm<TM; tm++)
             {
-                // if(threadIdx.x == PRODUCER_THREADS && blockIdx.x == 0 && blockIdx.y == 0)
-                // {
-                //     printf("swiglu %f, %f, %f\n", f_acc[tn][tm][0], f_acc[tn][tm][2], swiglu_mul(f_acc[tn][tm][0], f_acc[tn][tm][2]));
-                // }
                 f_acc[tn][tm][0] = swiglu_mul(f_acc[tn][tm][0], f_acc[tn][tm][2]);
                 f_acc[tn][tm][1] = swiglu_mul(f_acc[tn][tm][1], f_acc[tn][tm][3]);
             }
@@ -919,12 +918,7 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
                     int x_col = tn*32 + warp_id*8 + lane_id/4;
                     int i = x_row*BK2 + x_col;
                     int swizzled = swizzle<S_BITS_DOWN>(i);
-                    // swizzled = i;
                     s_d.x[swizzled] = fp8(f_acc[tn][tm][t]);
-                    // if(x_row == 0 && blockIdx.x == 0 && blockIdx.y == 0)
-                    // {
-                    //     printf("saving %f to %d, %d, acc %d, %f, %f\n", f_acc[tn][tm][t], x_row, x_col, token_dest[0], val, q);
-                    // }
                 }
             }
         }
@@ -932,9 +926,9 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
         float scale_x[TPT];
         for(int t = 0; t < TPT; t++)
         {
-            if (token_src[t] < M)
+            if (token_dest[t] < M * top_k)
             {
-                scale_x[t] = topk_weights[token_src[t]];
+                scale_x[t] = topk_weights[token_dest[t]];
             }
         }
 
@@ -957,25 +951,74 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
             constexpr int TN2 = BN2/64;
             float tile_acc[TN2][TN][TM][4];
             memset(tile_acc, 0, sizeof(tile_acc));
-            warpgroup_arrive();
             fp8* sx = s_d.x;
+            if(threadIdx.x == PRODUCER_THREADS)
+            {
+                fp8* sw = s_d.w + smem_stage*WS;
+                // for (int r = 0; r<BN2; r++)
+                // {
+                //     for(int c = 0; c<BK2; c++)
+                //     {
+                //         if(r == 0)
+                //             sw[r*BK2 + c] = fp8(1);
+                //         else
+                //             sw[r*BK2 + c] = fp8(0);
+                //     }
+                // }
+                // for (int r = 0; r<BM; r++)
+                // {
+                //     for(int c = 0; c<BK2; c++)
+                //     {
+                //         if(r == 0)
+                //             sx[r*BK2 + c] = fp8(c);
+                //         else
+                //             sx[r*BK2 + c] = fp8(0);
+                //     }
+                // }
+
+            }
+            __syncthreads();
+            warpgroup_arrive();
             for(int tn2 = 0; tn2<TN2; tn2++)
             {
                 fp8* sw = s_d.w + smem_stage*WS + tn2*64*BK2;
-                if(threadIdx.x == PRODUCER_THREADS && blockIdx.x == 0 && blockIdx.y == 0 && compute_stage == 0)
-                {
-                    for(int r = 0; r<1; r++)
-                    {
-                        for(int c = 0; c<BK2; c++)
-                        {
-                            int i = r*BK2 + c;
-                            int swizzled = swizzle<S_BITS_DOWN>(i);
-                            printf("%f,", float(sx[swizzled]) * token_max[0][0][0]);
-                        }
-                        printf("\n");
-                    }
-
-                }
+                // if(threadIdx.x == PRODUCER_THREADS + 124 && blockIdx.x == 0 && blockIdx.y == 0 && compute_stage == n_stages_down-1)
+                // {
+                //
+                //     if(tn2 == 3)
+                //     {
+                //         printf("printing w\n");
+                //         for(int r = 0; r<64; r++)
+                //         {
+                //             for(int c = 0; c<BK2; c++)
+                //             {
+                //                 int i = r*BK2 + c;
+                //                 int swizzled = swizzle<S_BITS_DOWN>(i);
+                //                 // printf("%f,", float(sx[swizzled]) * token_max[0][0][0]);
+                //                 printf("%f,", float(sw[swizzled]));
+                //             }
+                //             printf("\n");
+                //         }
+                //     }
+                //
+                // }
+                // if(threadIdx.x == PRODUCER_THREADS + 124 && blockIdx.x == 0 && blockIdx.y == 0 && compute_stage == n_stages_down-1 && tn2 == 0)
+                // {
+                //     printf("printing x\n");
+                //     for(int r = 0; r<BM; r++)
+                //     {
+                //         // int r = 0;
+                //         for(int c = 0; c<BK2; c++)
+                //         {
+                //             int i = r*BK2 + c;
+                //             int swizzled = swizzle<S_BITS_DOWN>(i);
+                //             // printf("%f,", float(sx[swizzled]) * token_max[0][0][0]);
+                //             printf("%f,", float(sx[swizzled]));
+                //         }
+                //         printf("\n");
+                //     }
+                //
+                // }
                 for(int tn = 0; tn<TN; tn++)
                 {
                     wgmma<1,1,1, BM, 16, 1, 16, 1, S_MODE_DOWN, S_MODE_DOWN>(tile_acc[tn2][tn], sw + (tn*32), sx + (tn*32));
@@ -983,8 +1026,8 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
             }
             warpgroup_commit_batch();
             warpgroup_wait();
-            arrive(bar + STAGES + smem_stage);
             // ATOMIC ADD OUTPUT HERE
+            bool pt = threadIdx.x == PRODUCER_THREADS + 4 && blockIdx.x == 0 && blockIdx.y == 63 && compute_stage == 0;
             for(int tn2 = 0; tn2<TN2; tn2++)
             {
                 for(int tm = 0; tm<TM; tm++)
@@ -997,33 +1040,54 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
                         {
                             acc += token_max[tn][tm][s]*tile_acc[tn2][tn][tm][t];
                         }
-                        int out_row = token_src[tm*2 + t%2];
+                        int out_row = token_dest[tm*2 + t%2];
                         int out_col = compute_stage*TN2*64 + tn2*64 + (warp_id%4)*16 + (t/2)*8 + (lane_id/4);
-                        if(out_row < M)
+                        if(out_row < M * top_k)
                         {
+                            float a_m = 0;
+                            fp8* sw = s_d.w + smem_stage*WS + tn2*64*BK2;
+                            int r = (warp_id%4)*16 + (t/2)*8 + (lane_id/4);
+                            for(int c = 0; c<BK2; c++)
+                            {
+                                int i = r*BK2 + c;
+                                int i_x = (tm*8 + t%2 + (lane_id%4)*2)*BK2 + c;
+                                int swizzled = swizzle<S_BITS_DOWN>(i);
+                                int swizzled_x = swizzle<S_BITS_DOWN>(i_x);
+                                a_m += float(sw[swizzled]) * float(sx[swizzled_x]);
+                                // if(pt && t == 0 && tn2 == 0)
+                                // if(out_row == 71 && out_col == 0 && blockIdx.x == 0)
+                                // {
+                                //     printf("adding r %d, c%d, i %d/%d, i_x %d/%d, w %f, x %f, scaled w %f, x%f, manual %f\n",
+                                //             r, c, i, swizzled, i_x, swizzled_x,
+                                //             float(sw[swizzled]), float(sx[swizzled_x]),
+                                //             scale_w * float(sw[swizzled]), scale_x[tm*2 + t%2] * float(sx[swizzled_x]), float(exp_w2[1])
+                                //           );
+                                // }
+
+                            }
+                            a_m *= token_max[0][tm][s];
 
                             // out[out_row*K + out_col] = acc;
                             atomicAdd(out + out_row*K + out_col, acc*scale_w*scale_x[tm*2 + t%2]);
-                            if(threadIdx.x == PRODUCER_THREADS && blockIdx.x == 0 && blockIdx.y == 0 && compute_stage == 0)
-                            {
-                                fp8* sw = s_d.w + smem_stage*WS + tn2*64*BK2;
-                                printf("adding acc %f, w_s %f, x_s %f, tile_ acc %f, token_max %f, %f, x %f, %f, w %f, %f\n",
-                                        acc,
-                                        scale_w,
-                                        scale_x[t],
-                                        tile_acc[tn2][0][tm][t],
-                                        token_max[0][tm][0],
-                                        token_max[0][tm][1],
-                                        float(sw[0]),
-                                        float(sw[1]),
-                                        float(sx[0]),
-                                        float(sx[1])
-                                      );
-                            }
+                            // atomicAdd(out + out_row*K + out_col, a_m*scale_w*scale_x[tm*2 + t%2]);
+                            // atomicAdd(out + out_row*K + out_col, 1);
+                            // if(out_row == 71 && out_col == 0)
+                            // {
+                            //     printf("adding acc %f, true %f, tile_acc %f, w_s %f, x_s %f, token_max  %f, r %d, c %d, t %d, r %d\n",
+                            //             acc*scale_w*scale_x[tm*2 + t%2],
+                            //             a_m*scale_w*scale_x[tm*2 + t%2],
+                            //             tile_acc[tn2][0][tm][t],
+                            //             scale_w,
+                            //             scale_x[tm*2 + t%2],
+                            //             token_max[0][tm][0],
+                            //             out_row, out_col, t, r
+                            //           );
+                            // }
                         }
                     }
                 }
             }
+            arrive(bar + STAGES + smem_stage);
             smem_stage++;
         }
     }
@@ -1056,7 +1120,7 @@ void launch_fused_moe_kernel_up_down(
     dim3 dimBlock(32*WN + PRODUCER_THREADS, 1, 1);
     dim3 dimGrid(std::ceil((float)N/(BN*WN)), std::ceil((float)sorted_num/(block_m)), 1);
 
-    static_assert(sizeof(smem_up<STAGES, WN, BM, BK, BN>) > sizeof(smem_down<STAGES, WN, BM, BK, BN>));
+    static_assert(sizeof(smem_up<STAGES, WN, BM, BK, BN>) >= sizeof(smem_down<STAGES, WN, BM, BK, BN>));
     size_t sMemSize = sizeof(smem_up<STAGES, WN, BM, BK, BN>);
     gpuErrchk(cudaFuncSetAttribute(
                 fused_moe_w8a8_wgmma_up_down_kernel<BM, BK, BN, WN, STAGES, PRODUCER_THREADS>,
