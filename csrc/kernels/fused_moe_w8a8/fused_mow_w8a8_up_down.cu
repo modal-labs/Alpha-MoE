@@ -679,8 +679,6 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
     smem_up<STAGES, WN, BM, BK, BN>& s = *reinterpret_cast<smem_up<STAGES, WN, BM, BK, BN>*>(sh);
 
     __shared__ __align__(8) uint64_t bar[2*STAGES];
-    int cp = 0;
-    __shared__ __align__(8) uint64_t consumer_bar;
     if (threadIdx.x == 0)
     {
         for (int i = 0; i < STAGES; i++)
@@ -688,14 +686,12 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
             init_barrier(&bar[i], PRODUCER_THREADS, 0);
             init_barrier(&bar[i + STAGES], CONSUMER_THREADS, 0);
         }
-        init_barrier(&consumer_bar, CONSUMER_THREADS, 0);
     }
     __syncthreads();
     auto consumer_sync = [&]()
     {
-        arrive(&consumer_bar);
-        wait(&consumer_bar, cp);
-        cp^=1;
+        asm volatile("bar.sync 10, 128;\n");
+
     };
 
     int n_stages_up = K/block_shape[0];
