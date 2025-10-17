@@ -1018,7 +1018,7 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
                         }
                     }
                     int out_row = tm * 8 + lane_id%8;
-                    int out_col = warp_id*16 + ((lane_id/8)*8)%16 + tn2*64 + (lane_id/16)*64;
+                    int out_col = warp_id*16 + (lane_id&8) + tn2*64 + (lane_id/16)*64;
                     st_matrix_x4_trans(reinterpret_cast<uint32_t*>(tile),
                             __cvta_generic_to_shared(s_d.out + out_row*PAD + out_col));
                 }
