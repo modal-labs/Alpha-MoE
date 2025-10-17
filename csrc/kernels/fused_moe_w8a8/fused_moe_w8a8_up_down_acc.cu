@@ -799,7 +799,6 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
                 p^=1;
                 smem_stage = 0;
             }
-            const int off = load_stage * block_shape[0];
             wait(bar + STAGES + smem_stage, p);
 
             if(threadIdx.x == 0)
@@ -901,8 +900,6 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
         {
             for(int tm = 0; tm<TM; tm++)
             {
-                int x_row = tm*8 + (lane_id%4)*2;
-                int x_col = tn*32 + warp_id*8 + lane_id/4;
                 f_acc[tn][tm][0] = swiglu_mul(f_acc[tn][tm][0], f_acc[tn][tm][2]);
                 f_acc[tn][tm][1] = swiglu_mul(f_acc[tn][tm][1], f_acc[tn][tm][3]);
             }
