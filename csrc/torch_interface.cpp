@@ -122,7 +122,8 @@ void fused_moe_w8a8_wgmma_up_down_tma(const fp8* x,
         int block_m
 );
 
-void fused_moe_w8a8_wgmma_up_down_acc(const fp8* x,
+void fused_moe_w8a8_wgmma_up_down_acc(
+        const fp8* x,
         const float* x_scale,
         fp8* w, const float* w_scale,
         fp8* w2, const float* w2_scale,
@@ -137,6 +138,10 @@ void fused_moe_w8a8_wgmma_up_down_acc(const fp8* x,
         int N,
         int sorted_num,
         int block_m,
+        int block_n,
+        int warp_n,
+        int stages,
+        int producer_threads,
         float scaling_factor
 );
 
@@ -215,7 +220,11 @@ torch::Tensor fused_moe_launcher_up_down(
         torch::Tensor& topk_weights,
         int top_k,
         int kernel_variant,
-        int BM,
+        int block_m,
+        int block_n,
+        int warp_n,
+        int stages,
+        int producer_threads,
         float scaling_factor
         )
 {
@@ -240,7 +249,7 @@ torch::Tensor fused_moe_launcher_up_down(
             x.size(1),
             w.size(1),
             sorted_token_ids.size(0),
-            BM);
+            block_m);
             break;
         case 1:
             fused_moe_w8a8_wgmma_up_down_ast(static_cast<__nv_fp8_e4m3*>(x.data_ptr()),
@@ -259,7 +268,7 @@ torch::Tensor fused_moe_launcher_up_down(
             x.size(1),
             w.size(1),
             sorted_token_ids.size(0),
-            BM);
+            block_m);
             break;
         case 2:
             fused_moe_w8a8_wgmma_up_down_tma(static_cast<__nv_fp8_e4m3*>(x.data_ptr()),
@@ -278,7 +287,7 @@ torch::Tensor fused_moe_launcher_up_down(
             x.size(1),
             w.size(1),
             sorted_token_ids.size(0),
-            BM);
+            block_m);
             break;
         case 3:
             out = torch::zeros({x.size(0), x.size(1)}, options);
@@ -298,7 +307,11 @@ torch::Tensor fused_moe_launcher_up_down(
             x.size(1),
             w.size(1),
             sorted_token_ids.size(0),
-            BM,
+            block_m,
+            block_n,
+            warp_n,
+            stages,
+            producer_threads,
             scaling_factor
             );
             break;
