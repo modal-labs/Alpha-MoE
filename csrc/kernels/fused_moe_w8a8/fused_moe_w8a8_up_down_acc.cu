@@ -888,21 +888,21 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
             const int scale_rows_w = N/block_shape[1];
             const int scale_cols_w = K/block_shape[0];
             float scale_x[TPT];
-            for(int t = 0; t < TPT; t++)
+            for(int t = 0; t < TPT; t+=2)
             {
-                // if (token_src[t] < M)
-                // {
-                //     scale_x[t] = x_scale[token_src[t]*scale_cols_x + compute_stage];
-                // }
-                int token_idx = (t/2)*8 + (lane_id%4)*2 + t%2;
-                scale_x[t] = s.scale_x_up[smem_stage * BM + token_idx];
+                if (token_src[t] < M)
+                {
+                    int token_idx = (t/2)*8 + (lane_id%4)*2;
+                    float2 sx = *reinterpret_cast<const float2*>(&s.scale_x_up[smem_stage * BM + token_idx]);
+                    scale_x[t] = sx.x;
+                    scale_x[t+1] = sx.y;
+                }
             }
             float scale_w[2];
             int s_r = w_row/(block_shape[1]*2);
-            // scale_w[0] = w_scale[exp_idx * scale_rows_w * scale_cols_w + (s_r)*scale_cols_w + compute_stage];
-            // scale_w[1] = w_scale[exp_idx * scale_rows_w * scale_cols_w + (s_r + 1)*scale_cols_w + compute_stage];
-            scale_w[0] = s.scale_w_up[smem_stage * 2];
-            scale_w[1] = s.scale_w_up[smem_stage * 2 + 1];
+            float2 sw = *reinterpret_cast<const float2*>(&s.scale_w_up[smem_stage * 2]);
+            scale_w[0] = sw.x;
+            scale_w[1] = sw.y;
 
 
             float tile_acc[TN][TM][4];
@@ -943,7 +943,8 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
         consumer_sync();
         smem_down<STAGES, WN, BM, BK, BN>& s_d = *reinterpret_cast<smem_down<STAGES, WN, BM, BK, BN>*>(sh);
         float4* block_max = reinterpret_cast<float4*>(s_d.out);
-        nv_bfloat162 token_max[TM];
+        constexpr float EPS = 1e-10;
+        nv_bfloat162 token_max[TM] = { nv_bfloat162(EPS, EPS) };
         for(int tn = 0; tn<TN; tn++)
         {
             for(int tm = 0; tm<TM; tm++)
@@ -954,7 +955,6 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
                 token_max[tm] = __hmax2(abs, token_max[tm]);
             }
         }
-        // Holds max firts, scale later
         for(int tm = 0; tm<TM; tm++)
         {
             token_max[tm] = __hmax2(__shfl_xor_sync(0xFFFFFFFF, token_max[tm], 16), token_max[tm]);
@@ -967,10 +967,6 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
             }
         }
         consumer_sync();
-        // It's kida sad that it's not constexpr compatible
-        // constexpr float fp8_max = static_cast<float>(::cuda::std::numeric_limits<fp8>::max());
-        // constexpr float fp8_min = static_cast<float>(::cuda::std::numeric_limits<fp8>::min());
-
         constexpr float fp8_max = 448.0;
         constexpr float fp8_min = -448.0;
         float token_scale[TM][2];
@@ -980,7 +976,6 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
             if (token_src[tm*2] < M)
             {
                 int off = tm*8 + (lane_id%4)*2;
-                // Reduce max across all warp groups using float4 loads
                 for(int wg = 0; wg < WARPGROUPS; wg++)
                 {
                     float4 bmax = block_max[off * WARPGROUPS + wg];
@@ -1008,18 +1003,19 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
             }
         }
 
-        for(int t = 0; t < TPT; t++)
+
+        for(int t = 0; t < TPT; t+=2)
         {
-            int token_idx = (t/2)*8 + (lane_id%4)*2 + t%2;
+            int token_idx = (t/2)*8 + (lane_id%4)*2;
             if (token_src[t] < M)
             {
-                // const float topk_w = topk_weights[token_dest[t]];
-                const float topk_w = topk_scales[token_idx];
-                token_scale[t/2][t%2] *= topk_w * scaling_factor;
-                // if(topk_scales[token_idx] != topk_weights[token_dest[t]])
-                //     printf(" got %f, expected %f\n",topk_scales[token_idx], topk_weights[token_dest[t]]);
+                const float2 topk_w = *reinterpret_cast<const float2*>(&topk_scales[token_idx]);
+                token_scale[t/2][0] *= topk_w.x * scaling_factor;
+                token_scale[t/2][1] *= topk_w.y * scaling_factor;
             }
         }
+
+        consumer_sync();
 
         for (int compute_stage = 0; compute_stage < n_stages_down; compute_stage += 1)
         {
