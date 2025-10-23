@@ -91,7 +91,7 @@ __device__ __forceinline__ void warpgroup_wait() {
 }
 
 template<int ScaleD, int ScaleA, int ScaleB>
-__device__ void wgmma8(float d[1][4], uint64_t desc_a, uint64_t desc_b)
+__device__ __forceinline__ void wgmma8(float d[1][4], uint64_t desc_a, uint64_t desc_b)
 {
     asm volatile(
         "{\n"
@@ -107,7 +107,7 @@ __device__ void wgmma8(float d[1][4], uint64_t desc_a, uint64_t desc_b)
 }
 
 template<int ScaleD, int ScaleA, int ScaleB>
-__device__ void wgmma16(float d[2][4], uint64_t desc_a, uint64_t desc_b)
+__device__ __forceinline__ void wgmma16(float d[2][4], uint64_t desc_a, uint64_t desc_b)
 {
     asm volatile(
         "{\n"
@@ -124,7 +124,7 @@ __device__ void wgmma16(float d[2][4], uint64_t desc_a, uint64_t desc_b)
 }
 
 template<int ScaleD, int ScaleA, int ScaleB>
-__device__ void wgmma24(float d[3][4], uint64_t desc_a, uint64_t desc_b)
+__device__ __forceinline__ void wgmma24(float d[3][4], uint64_t desc_a, uint64_t desc_b)
 {
     asm volatile(
         "{\n"
@@ -142,7 +142,7 @@ __device__ void wgmma24(float d[3][4], uint64_t desc_a, uint64_t desc_b)
 }
 
 template<int ScaleD, int ScaleA, int ScaleB>
-__device__ void wgmma32(float d[4][4], uint64_t desc_a, uint64_t desc_b)
+__device__ __forceinline__ void wgmma32(float d[4][4], uint64_t desc_a, uint64_t desc_b)
 {
     asm volatile(
         "{\n"
@@ -161,7 +161,7 @@ __device__ void wgmma32(float d[4][4], uint64_t desc_a, uint64_t desc_b)
 }
 
 template<int ScaleD, int ScaleA, int ScaleB>
-__device__ void wgmma40(float d[5][4], uint64_t desc_a, uint64_t desc_b)
+__device__ __forceinline__ void wgmma40(float d[5][4], uint64_t desc_a, uint64_t desc_b)
 {
     asm volatile(
         "{\n"
@@ -181,7 +181,7 @@ __device__ void wgmma40(float d[5][4], uint64_t desc_a, uint64_t desc_b)
 }
 
 template<int ScaleD, int ScaleA, int ScaleB>
-__device__ void wgmma48(float d[6][4], uint64_t desc_a, uint64_t desc_b)
+__device__ __forceinline__ void wgmma48(float d[6][4], uint64_t desc_a, uint64_t desc_b)
 {
     asm volatile(
         "{\n"
@@ -202,7 +202,7 @@ __device__ void wgmma48(float d[6][4], uint64_t desc_a, uint64_t desc_b)
 }
 
 template<int ScaleD, int ScaleA, int ScaleB>
-__device__ void wgmma56(float d[7][4], uint64_t desc_a, uint64_t desc_b)
+__device__ __forceinline__ void wgmma56(float d[7][4], uint64_t desc_a, uint64_t desc_b)
 {
     asm volatile(
         "{\n"
@@ -224,7 +224,7 @@ __device__ void wgmma56(float d[7][4], uint64_t desc_a, uint64_t desc_b)
 }
 
 template<int ScaleD, int ScaleA, int ScaleB>
-__device__ void wgmma64(float d[8][4], uint64_t desc_a, uint64_t desc_b)
+__device__ __forceinline__ void wgmma64(float d[8][4], uint64_t desc_a, uint64_t desc_b)
 {
     asm volatile(
         "{\n"
@@ -247,7 +247,7 @@ __device__ void wgmma64(float d[8][4], uint64_t desc_a, uint64_t desc_b)
 }
 
 template<int ScaleD, int ScaleA, int ScaleB>
-__device__ void wgmma72(float d[9][4], uint64_t desc_a, uint64_t desc_b)
+__device__ __forceinline__ void wgmma72(float d[9][4], uint64_t desc_a, uint64_t desc_b)
 {
     asm volatile(
         "{\n"
@@ -271,7 +271,7 @@ __device__ void wgmma72(float d[9][4], uint64_t desc_a, uint64_t desc_b)
 }
 
 template<int ScaleD, int ScaleA, int ScaleB>
-__device__ void wgmma80(float d[10][4], uint64_t desc_a, uint64_t desc_b)
+__device__ __forceinline__ void wgmma80(float d[10][4], uint64_t desc_a, uint64_t desc_b)
 {
     asm volatile(
         "{\n"
@@ -296,7 +296,7 @@ __device__ void wgmma80(float d[10][4], uint64_t desc_a, uint64_t desc_b)
 }
 
 template<int ScaleD, int ScaleA, int ScaleB>
-__device__ void wgmma88(float d[11][4], uint64_t desc_a, uint64_t desc_b)
+__device__ __forceinline__ void wgmma88(float d[11][4], uint64_t desc_a, uint64_t desc_b)
 {
     asm volatile(
         "{\n"
@@ -322,7 +322,7 @@ __device__ void wgmma88(float d[11][4], uint64_t desc_a, uint64_t desc_b)
 }
 
 template<int ScaleD, int ScaleA, int ScaleB>
-__device__ void wgmma96(float d[12][4], uint64_t desc_a, uint64_t desc_b)
+__device__ __forceinline__ void wgmma96(float d[12][4], uint64_t desc_a, uint64_t desc_b)
 {
     asm volatile(
         "{\n"
@@ -349,7 +349,7 @@ __device__ void wgmma96(float d[12][4], uint64_t desc_a, uint64_t desc_b)
 }
 
 template<int ScaleD, int ScaleA, int ScaleB>
-__device__ void wgmma104(float d[13][4], uint64_t desc_a, uint64_t desc_b)
+__device__ __forceinline__ void wgmma104(float d[13][4], uint64_t desc_a, uint64_t desc_b)
 {
     asm volatile(
         "{\n"
@@ -377,7 +377,7 @@ __device__ void wgmma104(float d[13][4], uint64_t desc_a, uint64_t desc_b)
 }
 
 template<int ScaleD, int ScaleA, int ScaleB>
-__device__ void wgmma112(float d[14][4], uint64_t desc_a, uint64_t desc_b)
+__device__ __forceinline__ void wgmma112(float d[14][4], uint64_t desc_a, uint64_t desc_b)
 {
     asm volatile(
         "{\n"
@@ -406,7 +406,7 @@ __device__ void wgmma112(float d[14][4], uint64_t desc_a, uint64_t desc_b)
 }
 
 template<int ScaleD, int ScaleA, int ScaleB>
-__device__ void wgmma120(float d[15][4], uint64_t desc_a, uint64_t desc_b)
+__device__ __forceinline__ void wgmma120(float d[15][4], uint64_t desc_a, uint64_t desc_b)
 {
     asm volatile(
         "{\n"
@@ -436,7 +436,7 @@ __device__ void wgmma120(float d[15][4], uint64_t desc_a, uint64_t desc_b)
 }
 
 template<int ScaleD, int ScaleA, int ScaleB>
-__device__ void wgmma128(float d[16][4], uint64_t desc_a, uint64_t desc_b)
+__device__ __forceinline__ void wgmma128(float d[16][4], uint64_t desc_a, uint64_t desc_b)
 {
     asm volatile(
         "{\n"
@@ -467,7 +467,7 @@ __device__ void wgmma128(float d[16][4], uint64_t desc_a, uint64_t desc_b)
 }
 
 template<int ScaleD, int ScaleA, int ScaleB, int BM>
-__device__ void wgmma(float d[BM/8][4], uint64_t desc_a, uint64_t desc_b)
+__device__ __forceinline__ void wgmma(float d[BM/8][4], uint64_t desc_a, uint64_t desc_b)
 {
     if constexpr (BM == 8)
         wgmma8<ScaleD, ScaleA, ScaleB>(d, desc_a, desc_b);
