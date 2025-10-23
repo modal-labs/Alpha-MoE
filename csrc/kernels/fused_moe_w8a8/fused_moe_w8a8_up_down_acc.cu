@@ -466,12 +466,9 @@ __device__ void wgmma128(float d[16][4], uint64_t desc_a, uint64_t desc_b)
             "n"(int32_t(ScaleB)));
 }
 
-template<int ScaleD, int ScaleA, int ScaleB, int BM, int SDO_A, int LDO_A, int SDO_B, int LDO_B, int S_MODE_A, int S_MODE_B>
-__device__ void wgmma(float d[BM/8][4], fp8* sA, fp8* sB)
+template<int ScaleD, int ScaleA, int ScaleB, int BM>
+__device__ void wgmma(float d[BM/8][4], uint64_t desc_a, uint64_t desc_b)
 {
-    uint64_t desc_a = make_smem_descriptor<SDO_A, LDO_A, S_MODE_A>(&sA[0]);
-    uint64_t desc_b = make_smem_descriptor<SDO_B, LDO_B, S_MODE_B>(&sB[0]);
-
     if constexpr (BM == 8)
         wgmma8<ScaleD, ScaleA, ScaleB>(d, desc_a, desc_b);
     else if constexpr (BM == 16)
@@ -902,10 +899,12 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
             {
                 fp8* sw = s.w + smem_stage*WS + (warp_id/4)*(BN*4)*BK + tn*64*BK;
                 fp8* sx = s.x + smem_stage*XS;
-                wgmma<1,1,1, BM, 64, 1, 64, 1, S_MODE_UP, S_MODE_UP>(tile_acc[tn], sw, sx);
-                wgmma<1,1,1, BM, 64, 1, 64, 1, S_MODE_UP, S_MODE_UP>(tile_acc[tn], sw+1*32, sx+1*32);
-                wgmma<1,1,1, BM, 64, 1, 64, 1, S_MODE_UP, S_MODE_UP>(tile_acc[tn], sw+2*32, sx+2*32);
-                wgmma<1,1,1, BM, 64, 1, 64, 1, S_MODE_UP, S_MODE_UP>(tile_acc[tn], sw+3*32, sx+3*32);
+                uint64_t desc_w = make_smem_descriptor<64, 1, S_MODE_UP>(sw);
+                uint64_t desc_x = make_smem_descriptor<64, 1, S_MODE_UP>(sx);
+                wgmma<1,1,1, BM>(tile_acc[tn], desc_w, desc_x);
+                wgmma<1,1,1, BM>(tile_acc[tn], desc_w+1*(32>>4), desc_x+1*(32>>4));
+                wgmma<1,1,1, BM>(tile_acc[tn], desc_w+2*(32>>4), desc_x+2*(32>>4));
+                wgmma<1,1,1, BM>(tile_acc[tn], desc_w+3*(32>>4), desc_x+3*(32>>4));
             }
             warpgroup_commit_batch();
             warpgroup_wait();
@@ -1021,9 +1020,13 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
             for(int tn2 = 0; tn2 < TN2; tn2++)
             {
                 fp8* sw = s_d.w + smem_stage*WS + ((warp_id/4)*TN2 + tn2)*64*BK2;
+                uint64_t desc_w = make_smem_descriptor<BK2/2, 1, S_MODE_DOWN>(sw);
+                uint64_t desc_x = make_smem_descriptor<BK2/2, 1, S_MODE_DOWN>(sx);
                 for(int tk = 0; tk < BK2/32; tk++)
                 {
-                    wgmma<1,1,1, BM, BK2/2, 1, BK2/2, 1, S_MODE_DOWN, S_MODE_DOWN>(tile_acc[tn2], sw + (tk*32), sx + (tk*32));
+                    wgmma<1,1,1, BM>(tile_acc[tn2], desc_w, desc_x);
+                    desc_w += (32>>4);
+                    desc_x += (32>>4);
                 }
             }
             warpgroup_commit_batch();
