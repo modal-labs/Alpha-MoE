@@ -679,8 +679,6 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
     if(warpM * BM >= num_tokens_post_padded[0])
         return;
 
-    const int32_t warpN = (blockIdx.x*CONSUMER_THREADS + (threadIdx.x - PRODUCER_THREADS))/32;
-
     //TODO should not be hardcoded
     constexpr int block_shape[2] = {128, 128};
 
@@ -698,7 +696,6 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
     const int lane_id = threadIdx.x%32;
     const bool is_producer = threadIdx.x < PRODUCER_THREADS;
     const int warp_id = is_producer ? threadIdx.x/32 : (threadIdx.x-PRODUCER_THREADS)/32;
-    const int w_row = warpN * BN + (lane_id>>2);
 
     constexpr int BK2 = WN*BN/2;
     constexpr int BN2 = BK*2;
@@ -870,9 +867,6 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
             }
             wait(bar + smem_stage, p);
 
-            const int scale_cols_x = K/block_shape[1];
-            const int scale_rows_w = N/block_shape[1];
-            const int scale_cols_w = K/block_shape[0];
             float scale_x[TPT];
             for(int t = 0; t < TPT; t+=2)
             {
@@ -882,13 +876,24 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
                 scale_x[t+1] = sx.y;
             }
             float scale_w[2];
-            int s_r = w_row/(block_shape[1]*2);
             float2 sw = *reinterpret_cast<const float2*>(&s.scale_w_up[smem_stage * 2]);
             scale_w[0] = sw.x;
             scale_w[1] = sw.y;
 
             float tile_acc[TN][TM][4];
             memset(tile_acc, 0, sizeof(tile_acc));
+            // https://github.com/NVIDIA/cutlass/discussions/1375
+            // This is cursed
+            for (int tn = 0; tn < TN; tn++)
+            {
+                for (int tm = 0; tm < TM; tm++)
+                {
+                    for (int t = 0; t < 4; t++)
+                        asm volatile("" : "+f"(tile_acc[tn][tm][t]) :: "memory");
+                }
+            }
+
+            cuda::ptx::fence_proxy_async(cuda::ptx::space_shared);
             warpgroup_arrive();
             for(int tn = 0; tn<TN; tn++)
             {
@@ -1010,6 +1015,14 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
             memset(tile_acc, 0, sizeof(tile_acc));
             fp8* sx = s_d.x;
             wait(bar + smem_stage, p);
+            for (int tn = 0; tn < TN2; tn++)
+            {
+                for (int tm = 0; tm < TM; tm++)
+                {
+                    for (int t = 0; t < 4; t++)
+                        asm volatile("" : "+f"(tile_acc[tn][tm][t]) :: "memory");
+                }
+            }
             warpgroup_arrive();
             for (int i = 0; i<(TN2/2); i++)
                 s_w[i] = s_d.scale_w_down[smem_stage*WARPGROUPS*(TN2/2) + (warp_id/4)*(TN2/2) + i];
