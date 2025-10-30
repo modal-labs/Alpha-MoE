@@ -648,7 +648,6 @@ struct smem_down
     alignas(1024) fp8 w[STAGES*WN*BK*BN];
     alignas(1024) fp8 x[BM*WN*BN/2];
     alignas(16) __nv_bfloat16 out[BM*(BK*2 + 8)];
-    float scale_w_down[STAGES * (BK*2)/128];
 };
 
 
@@ -672,6 +671,7 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
         float scaling_factor
         )
 {
+    __shared__ float scale_w_down[STAGES * (BK*2)/128];
     constexpr int CONSUMER_THREADS = WN*32;
     constexpr int WARPGROUPS = WN / 4;
     const int32_t warpM = blockIdx.y;
@@ -830,7 +830,7 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
             const int scales_per_stage = BN2 / block_shape[0];
             if(threadIdx.x < WARPGROUPS * TN2/2)
             {
-                uint32_t smem = __cvta_generic_to_shared(s_d.scale_w_down + smem_stage * WARPGROUPS * TN2 / 2 + threadIdx.x);
+                uint32_t smem = __cvta_generic_to_shared(scale_w_down + smem_stage * WARPGROUPS * TN2 / 2 + threadIdx.x);
                 CP_ASYNC_CG4(smem,
                         &w2_scale[exp_idx * scale_rows_w * scale_cols_w +
                         load_stage*scales_per_stage + threadIdx.x], 4);
@@ -1026,7 +1026,7 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
             }
             warpgroup_arrive();
             for (int i = 0; i<(TN2/2); i++)
-                s_w[i] = s_d.scale_w_down[smem_stage*WARPGROUPS*(TN2/2) + (warp_id/4)*(TN2/2) + i];
+                s_w[i] = scale_w_down[smem_stage*WARPGROUPS*(TN2/2) + (warp_id/4)*(TN2/2) + i];
 
             for(int tn2 = 0; tn2 < TN2; tn2++)
             {
