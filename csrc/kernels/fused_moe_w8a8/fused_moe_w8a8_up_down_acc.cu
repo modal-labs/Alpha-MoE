@@ -671,7 +671,6 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
         float scaling_factor
         )
 {
-    __shared__ float scale_w_down[STAGES * (BK*2)/128];
     constexpr int CONSUMER_THREADS = WN*32;
     constexpr int WARPGROUPS = WN / 4;
     const int32_t warpM = blockIdx.y;
@@ -711,12 +710,14 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
     constexpr int TPT = BM/4;
 
     constexpr int TN2 = BN2/(64*WARPGROUPS);
+    constexpr int scales_per_stage_down = BN2 / block_shape[0];
     // Shared memory for scales
     extern __shared__ __align__(1024) uint8_t sh[];
     smem_up<STAGES, WN, BM, BK, BN>& s = *reinterpret_cast<smem_up<STAGES, WN, BM, BK, BN>*>(sh);
 
     __shared__ __align__(8) uint64_t bar[2*STAGES];
     __shared__ float topk_scales[BM];
+    __shared__ float scale_w_down[2*STAGES * (BK*2)/128];
     if (threadIdx.x == 0)
     {
         for (int i = 0; i < STAGES; i++)
@@ -827,13 +828,12 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
             wait(bar + STAGES + smem_stage, p);
             const int scale_rows_w = N2/block_shape[1];
             const int scale_cols_w = K2/block_shape[0];
-            const int scales_per_stage = BN2 / block_shape[0];
-            if(threadIdx.x < WARPGROUPS * TN2/2)
+            if((load_stage)%STAGES == 0 && threadIdx.x < STAGES * scales_per_stage_down && load_stage + (threadIdx.x/scales_per_stage_down) < n_stages_down)
             {
-                uint32_t smem = __cvta_generic_to_shared(scale_w_down + smem_stage * WARPGROUPS * TN2 / 2 + threadIdx.x);
+                uint32_t smem = __cvta_generic_to_shared(scale_w_down + ((load_stage/STAGES)%2)*STAGES * scales_per_stage_down + threadIdx.x);
                 CP_ASYNC_CG4(smem,
                         &w2_scale[exp_idx * scale_rows_w * scale_cols_w +
-                        load_stage*scales_per_stage + threadIdx.x], 4);
+                        (load_stage)*scales_per_stage_down + threadIdx.x], 4);
             }
             if(threadIdx.x == 0)
             {
@@ -1025,8 +1025,18 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
                 }
             }
             warpgroup_arrive();
+            const int scale_rows_w = N2/block_shape[1];
+            const int scale_cols_w = K2/block_shape[0];
             for (int i = 0; i<(TN2/2); i++)
-                s_w[i] = scale_w_down[smem_stage*WARPGROUPS*(TN2/2) + (warp_id/4)*(TN2/2) + i];
+            {
+                s_w[i] = scale_w_down[((compute_stage/STAGES)%2)*STAGES*scales_per_stage_down + (compute_stage%STAGES)*scales_per_stage_down + (warp_id/4)*(TN2/2) + i];
+                // if((warp_id%4 == 0) && lane_id == 0 && s_w[i] != w2_scale[exp_idx * scale_rows_w * scale_cols_w + compute_stage*(TN2/2) + i] && blockIdx.y == 0)
+                //     printf("%d/%d/%d got scaless %f expected %f\n",
+                //             smem_stage, compute_stage, warp_id,
+                //             s_w[i],
+                //             w2_scale[exp_idx * scale_rows_w * scale_cols_w + compute_stage*(TN2/2) + i]
+                //           );
+            }
 
             for(int tn2 = 0; tn2 < TN2; tn2++)
             {
