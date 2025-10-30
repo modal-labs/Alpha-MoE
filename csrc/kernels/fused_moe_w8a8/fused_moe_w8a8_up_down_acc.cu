@@ -638,8 +638,8 @@ struct smem_up
 {
     alignas(1024) fp8 w[STAGES*WN*BK*BN];
     alignas(1024) fp8 x[STAGES*BK*BM];
-    float scale_w_up[STAGES * 2];
-    float scale_x_up[STAGES * BM];
+    float scale_w_up[2*STAGES * 2];
+    float scale_x_up[2*STAGES * BM];
 };
 
 template<int STAGES, int WN, int BM, int BK, int BN>
@@ -785,10 +785,11 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
                 {
                     uint32_t sm = __cvta_generic_to_shared(s.x + smem_stage*XS + swizzled);
                     CP_ASYNC_CG(sm, reinterpret_cast<const float4*>(x + row*K + col), TB);
-                    if(threadIdx.x % 8 == 0)
+                    if(smem_stage == 0 && threadIdx.x % 8 < STAGES && load_stage + threadIdx.x%8 < n_stages_up)
                     {
-                        uint32_t smem = __cvta_generic_to_shared(s.scale_x_up + smem_stage * BM + r * (PRODUCER_THREADS/8) + threadIdx.x/8);
-                        CP_ASYNC_CG4(smem, &x_scale[row*(K/block_shape[1]) + load_stage], 4);
+                        uint32_t smem = __cvta_generic_to_shared(s.scale_x_up + p*STAGES*BM +
+                                + (threadIdx.x%8) * BM + r * (PRODUCER_THREADS/8) + threadIdx.x/8);
+                        CP_ASYNC_CG4(smem, &x_scale[row*(K/block_shape[1]) + load_stage + threadIdx.x%8], 4);
                     }
                 }
                 i += PRODUCER_THREADS*TO;
@@ -797,12 +798,12 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
 
             const int scale_rows_w_up = N/block_shape[1];
             const int scale_cols_w_up = K/block_shape[0];
-            if(threadIdx.x < 2)
+            if(smem_stage == 0 && load_stage + threadIdx.x/2 < n_stages_up && threadIdx.x/2 < STAGES)
             {
-                uint32_t smem = __cvta_generic_to_shared(s.scale_w_up + smem_stage * 2 + threadIdx.x);
+                uint32_t smem = __cvta_generic_to_shared(s.scale_w_up + p*STAGES*2 + threadIdx.x);
                 CP_ASYNC_CG4(smem,
                         &w_scale[exp_idx * scale_rows_w_up * scale_cols_w_up +
-                        (threadIdx.x)*scale_cols_w_up + load_stage], 4);
+                        (threadIdx.x%2)*scale_cols_w_up + load_stage + threadIdx.x/2], 4);
             }
             cp_async_mbarrier_arrive(bar + smem_stage);
 
@@ -871,12 +872,12 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
             for(int t = 0; t < TPT; t+=2)
             {
                 int token_idx = (t/2)*8 + (lane_id%4)*2;
-                float2 sx = *reinterpret_cast<const float2*>(&s.scale_x_up[smem_stage * BM + token_idx]);
+                float2 sx = *reinterpret_cast<const float2*>(&s.scale_x_up[p*STAGES*BM + smem_stage * BM + token_idx]);
                 scale_x[t] = sx.x;
                 scale_x[t+1] = sx.y;
             }
             float scale_w[2];
-            float2 sw = *reinterpret_cast<const float2*>(&s.scale_w_up[smem_stage * 2]);
+            float2 sw = *reinterpret_cast<const float2*>(&s.scale_w_up[p*STAGES*2 + smem_stage * 2]);
             scale_w[0] = sw.x;
             scale_w[1] = sw.y;
 
