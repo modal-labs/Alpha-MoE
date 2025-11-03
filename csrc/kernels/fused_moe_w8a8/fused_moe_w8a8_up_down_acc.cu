@@ -1030,12 +1030,6 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
             for (int i = 0; i<(TN2/2); i++)
             {
                 s_w[i] = scale_w_down[((compute_stage/STAGES)%2)*STAGES*scales_per_stage_down + (compute_stage%STAGES)*scales_per_stage_down + (warp_id/4)*(TN2/2) + i];
-                // if((warp_id%4 == 0) && lane_id == 0 && s_w[i] != w2_scale[exp_idx * scale_rows_w * scale_cols_w + compute_stage*(TN2/2) + i] && blockIdx.y == 0)
-                //     printf("%d/%d/%d got scaless %f expected %f\n",
-                //             smem_stage, compute_stage, warp_id,
-                //             s_w[i],
-                //             w2_scale[exp_idx * scale_rows_w * scale_cols_w + compute_stage*(TN2/2) + i]
-                //           );
             }
 
             for(int tn2 = 0; tn2 < TN2; tn2++)
