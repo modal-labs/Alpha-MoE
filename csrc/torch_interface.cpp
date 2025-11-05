@@ -1,10 +1,10 @@
-#include <pybind11/functional.h>
-#include <torch/python.h>
-#include <torch/all.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda.h>
 #include <cuda_fp8.h>
 #include <cuda_bf16.h>
+#include <torch/all.h>
+#include <torch/library.h>
+#include <torch/extension.h>
 
 using fp8 = __nv_fp8_e4m3;
 
@@ -30,28 +30,30 @@ void fused_moe_w8a8_wgmma_up_down_acc(
         int producer_threads,
         float scaling_factor
 );
-torch::Tensor fused_moe_launcher_up_down(
-        torch::Tensor& x,
-        torch::Tensor& x_scale,
-        torch::Tensor& w,
-        torch::Tensor& w_scale,
-        torch::Tensor& w2,
-        torch::Tensor& w2_scale,
-        torch::Tensor& sorted_token_ids,
-        torch::Tensor& expert_ids,
-        torch::Tensor& num_tokens_post_padded,
-        torch::Tensor& topk_weights,
+
+// CUDA implementation
+void fused_moe_w8a8_up_down(
+        const torch::Tensor& x,
+        const torch::Tensor& x_scale,
+        const torch::Tensor& w,
+        const torch::Tensor& w_scale,
+        const torch::Tensor& w2,
+        const torch::Tensor& w2_scale,
+        const torch::Tensor& sorted_token_ids,
+        const torch::Tensor& expert_ids,
+        const torch::Tensor& num_tokens_post_padded,
+        const torch::Tensor& topk_weights,
         torch::Tensor& out,
-        int top_k,
-        int block_m,
-        int block_n,
-        int warp_n,
-        int stages,
-        int producer_threads,
-        float scaling_factor
-        )
-{
-    fused_moe_w8a8_wgmma_up_down_acc(static_cast<__nv_fp8_e4m3*>(x.data_ptr()),
+        int64_t top_k,
+        int64_t block_m,
+        int64_t block_n,
+        int64_t warp_n,
+        int64_t stages,
+        int64_t producer_threads,
+        double scaling_factor
+) {
+    fused_moe_w8a8_wgmma_up_down_acc(
+            static_cast<__nv_fp8_e4m3*>(x.data_ptr()),
             static_cast<float*>(x_scale.data_ptr()),
             static_cast<__nv_fp8_e4m3*>(w.data_ptr()),
             static_cast<float*>(w_scale.data_ptr()),
@@ -62,21 +64,46 @@ torch::Tensor fused_moe_launcher_up_down(
             static_cast<int*>(expert_ids.data_ptr()),
             static_cast<int*>(num_tokens_post_padded.data_ptr()),
             static_cast<float*>(topk_weights.data_ptr()),
-            top_k,
+            static_cast<int>(top_k),
             x.size(0),
             x.size(1),
             w.size(1),
             sorted_token_ids.size(0),
-            block_m,
-            block_n,
-            warp_n,
-            stages,
-            producer_threads,
-            scaling_factor
-                );
-    return out;
+            static_cast<int>(block_m),
+            static_cast<int>(block_n),
+            static_cast<int>(warp_n),
+            static_cast<int>(stages),
+            static_cast<int>(producer_threads),
+            static_cast<float>(scaling_factor)
+    );
 }
 
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("fused_moe_w8a8_up_down", &fused_moe_launcher_up_down);
+// Register the custom operator
+TORCH_LIBRARY_FRAGMENT(alpha_kernel, m) {
+    m.def("fused_moe_w8a8_up_down("
+            "Tensor x, "
+            "Tensor x_scale, "
+            "Tensor w, "
+            "Tensor w_scale, "
+            "Tensor w2, "
+            "Tensor w2_scale, "
+            "Tensor sorted_token_ids, "
+            "Tensor expert_ids, "
+            "Tensor num_tokens_post_padded, "
+            "Tensor topk_weights, "
+            "Tensor(a!) out, "
+            "int top_k, "
+            "int block_m, "
+            "int block_n, "
+            "int warp_n, "
+            "int stages, "
+            "int producer_threads, "
+            "float scaling_factor"
+            ") -> ()"
+         );
+    m.impl("fused_moe_w8a8_up_down", torch::kCUDA, &fused_moe_w8a8_up_down);
+}
+
+PYBIND11_MODULE(alpha_kernel, m) {
+  // Empty module - operators are registered via TORCH_LIBRARY
 }
