@@ -28,7 +28,6 @@ void fused_moe_w8a8_wgmma_up_down_acc(
         int block_n,
         int warp_n,
         int stages,
-        int producer_threads,
         float scaling_factor,
         cudaStream_t stream
 );
@@ -51,7 +50,6 @@ void fused_moe_w8a8_up_down(
         int64_t block_n,
         int64_t warp_n,
         int64_t stages,
-        int64_t producer_threads,
         double scaling_factor
 ) {
     const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
@@ -77,7 +75,6 @@ void fused_moe_w8a8_up_down(
             static_cast<int>(block_n),
             static_cast<int>(warp_n),
             static_cast<int>(stages),
-            static_cast<int>(producer_threads),
             static_cast<float>(scaling_factor),
             stream
     );
@@ -102,7 +99,6 @@ TORCH_LIBRARY_FRAGMENT(alpha_kernel, m) {
             "int block_n, "
             "int warp_n, "
             "int stages, "
-            "int producer_threads, "
             "float scaling_factor"
             ") -> ()"
          );
