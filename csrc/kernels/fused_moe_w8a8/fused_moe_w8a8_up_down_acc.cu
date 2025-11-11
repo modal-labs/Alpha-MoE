@@ -804,7 +804,7 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
                 uint32_t smem = __cvta_generic_to_shared(s.scale_w_up + p*STAGES*2 + threadIdx.x);
                 CP_ASYNC_CG4(smem,
                         &w_scale[exp_idx * scale_rows_w_up * scale_cols_w_up +
-                        (threadIdx.x%2)*scale_cols_w_up + load_stage + threadIdx.x/2], 4);
+                        (blockIdx.x*2 + threadIdx.x%2)*scale_cols_w_up + load_stage + threadIdx.x/2], 4);
             }
             cp_async_mbarrier_arrive(bar + smem_stage);
 
@@ -833,7 +833,8 @@ __global__ __launch_bounds__(WN*32 + PRODUCER_THREADS) void fused_moe_w8a8_wgmma
                 uint32_t smem = __cvta_generic_to_shared(scale_w_down + ((load_stage/STAGES)%2)*STAGES * scales_per_stage_down + threadIdx.x);
                 CP_ASYNC_CG4(smem,
                         &w2_scale[exp_idx * scale_rows_w * scale_cols_w +
-                        (load_stage)*scales_per_stage_down + threadIdx.x], 4);
+                        blockIdx.x * (BK2/block_shape[0]) +
+                        (load_stage*scales_per_stage_down + threadIdx.x)*gridDim.x*(BK2/block_shape[0])], 4);
             }
             if(threadIdx.x == 0)
             {
