@@ -20,7 +20,6 @@ def fused_moe_w8a8_up_down_abstract(
     block_n: int,
     warp_n: int,
     stages: int,
-    producer_threads: int,
     scaling_factor: float,
 ) -> torch.Tensor:
     return out
@@ -43,7 +42,6 @@ def fused_moe_w8a8_up_down(
     block_n: int,
     warp_n: int,
     stages: int,
-    producer_threads: int,
     scaling_factor: float,
 ) -> torch.Tensor:
     """
@@ -64,7 +62,6 @@ def fused_moe_w8a8_up_down(
         block_n: Tuning parameter: Block size in N dimension
         warp_n: Tuning parameter: Number of warps in N dimension
         stages: Tuning parameter: Pipeline stages
-        producer_threads: Tuning parameter: Number of producer threads
         scaling_factor: Scaling factor for the output
 
     Returns:
@@ -87,7 +84,6 @@ def fused_moe_w8a8_up_down(
         block_n,
         warp_n,
         stages,
-        producer_threads,
         scaling_factor,
     )
 
