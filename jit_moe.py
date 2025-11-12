@@ -68,7 +68,7 @@ def parse_arguments():
 
     parser.add_argument('--N',
                         type=int,
-                        default=512,
+                        default=256,
                         help='N dimension for MoE')
 
     parser.add_argument('--K',
