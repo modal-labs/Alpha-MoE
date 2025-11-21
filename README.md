@@ -91,6 +91,16 @@ torch.ops.alpha_moe.fused_moe_w8a8_up_down(A, A_scale, w1, w1_scale, w2, w2_scal
                                                  topk, block_m, bn, wn, stages, routed_scaling_factor)
 ```
 
+## Weight interleaving
+
+Alpha-MoE requires weights of Up projection and Gate to be interleaved in chunks of 8 and scales to be interleaved in chunks of 1. We provide a helper function for it:
+
+```py
+from alpha_moe_python.utils import interleave_tensor
+w1 = interleave_tensor(w1, rep=8)
+w1_scale = interleave_tensor(w1_scale, rep=1)
+```
+
 ## Usage inside SGLang
 
 For sglang we provide a patch file inside extra. After pulling the official SGLang docker container and installing Alpha-MoE you can 
