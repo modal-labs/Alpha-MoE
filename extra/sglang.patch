@@ -64,14 +64,6 @@ index 4924fca..e781648 100644
  
      def _load_per_tensor_weight_scale(
          self,
-@@ -709,6 +713,7 @@ class FusedMoE(torch.nn.Module):
-                     expert_data=expert_data,
-                     tp_rank=tp_rank,
-                 )
-+             )
-             return
- 
-         # Case weight scales and zero_points
 @@ -742,6 +747,15 @@ class FusedMoE(torch.nn.Module):
                      expert_data=expert_data,
                      tp_rank=tp_rank,
