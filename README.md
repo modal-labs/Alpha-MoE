@@ -76,7 +76,7 @@ For performance comparisons against SGLang you can later run `test/test_moe_perf
 
 We also provide an utils that can help find the optimal configuration for current num_input_tokens. With the script installed the invocation can look like this:
 
-```
+```py
 M = num_tokens
 local_conf = get_best_config(os.getenv("ALPHA_MOE_CONFIG"), M)
 block_m = local_conf["block_m"]
