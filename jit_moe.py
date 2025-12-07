@@ -93,7 +93,13 @@ def parse_arguments():
 
     parser.add_argument('--out-config',
                         default=None,
-                        help='Where to store config, default: moe_jit_E_N_K.json')
+                        help='Where to store config, default: moe_jit_E_N_K_HxW.json')
+
+    parser.add_argument('--block-shape',
+                        type=int,
+                        nargs=2,
+                        default=[128, 128],
+                        help='Block shape for quantization [height, width]')
 
     return parser.parse_args()
 
@@ -106,7 +112,7 @@ if __name__ == "__main__":
 
     hidden_size = args.K
     top_k = args.top_k + args.shared_expert
-    block_shape = [128, 128]
+    block_shape = args.block_shape
     E = args.E + args.shared_expert
     N = args.N
     K = args.K
@@ -160,11 +166,11 @@ if __name__ == "__main__":
                         out = torch.zeros_like(x)
                         torch.ops.alpha_moe.fused_moe_w8a8_up_down(x_q, x_scale, w1, w1_scale, w2, w2_scale, sorted_token_ids,
                                                                       expert_ids, num_tokens_post_padded, topk_weights, out, top_k,
-                                                                      block_m, bn, wn, stages, 2.5)
+                                                                      block_m, bn, wn, stages, block_shape[0], block_shape[1], 2.5)
 
                         new_time = bench_fn(lambda: torch.ops.alpha_moe.fused_moe_w8a8_up_down(x_q, x_scale, w1, w1_scale, w2, w2_scale, sorted_token_ids,
                                                                                                   expert_ids, num_tokens_post_padded, topk_weights, out, top_k,
-                                                                                                  block_m, bn, wn, stages, 2.5))
+                                                                                                  block_m, bn, wn, stages, block_shape[0], block_shape[1], 2.5))
                         times[num_tokens][(block_m, bn, wn, stages)].append(new_time)
     conf_to_save = {}
     for nt, val in times.items():
@@ -178,7 +184,7 @@ if __name__ == "__main__":
                 "stages": stages
                 }
 
-    out_config = args.out_config or f"moe_jit_{E}_{N}_{K}.json"
+    out_config = args.out_config or f"moe_jit_{E}_{N}_{K}_{block_shape[0]}x{block_shape[1]}.json"
     with open(out_config, "w") as f:
         json.dump(conf_to_save, f)
 

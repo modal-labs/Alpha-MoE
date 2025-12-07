@@ -20,6 +20,8 @@ def fused_moe_w8a8_up_down_abstract(
     block_n: int,
     warp_n: int,
     stages: int,
+    block_h: int,
+    block_w: int,
     scaling_factor: float,
 ) -> torch.Tensor:
     return out
@@ -42,16 +44,18 @@ def fused_moe_w8a8_up_down(
     block_n: int,
     warp_n: int,
     stages: int,
+    block_h: int,
+    block_w: int,
     scaling_factor: float,
 ) -> torch.Tensor:
     """
     Args:
         x: Input tensor [M, K] in FP8 format
-        x_scale: Per-token scale factors for x
+        x_scale: Per-token scale factors for x [M, K//block_w]
         w: First weight matrix [num_experts, N, K] in FP8 format (up projection)
-        w_scale: Scale factors for w
+        w_scale: Scale factors for w [num_experts, N//block_h, K//block_w]
         w2: Second weight matrix [num_experts, K, N//2] in FP8 format (down projection)
-        w2_scale: Scale factors for w2
+        w2_scale: Scale factors for w2 [num_experts, K//block_h, (N//2)//block_w]
         sorted_token_ids: Sorted token indices
         expert_ids: Expert indices for each block
         num_tokens_post_padded: Number of tokens after padding
@@ -62,6 +66,8 @@ def fused_moe_w8a8_up_down(
         block_n: Tuning parameter: Block size in N dimension
         warp_n: Tuning parameter: Number of warps in N dimension
         stages: Tuning parameter: Pipeline stages
+        block_h: Quantization block size in H (rows) dimension (64 or 128)
+        block_w: Quantization block size in W (cols) dimension (64 or 128)
         scaling_factor: Scaling factor for the output
 
     Returns:
@@ -84,6 +90,8 @@ def fused_moe_w8a8_up_down(
         block_n,
         warp_n,
         stages,
+        block_h,
+        block_w,
         scaling_factor,
     )
 

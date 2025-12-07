@@ -29,6 +29,8 @@ void fused_moe_w8a8_wgmma_up_down_acc(
         int block_n,
         int warp_n,
         int stages,
+        int block_h,
+        int block_w,
         float scaling_factor,
         cudaStream_t stream
 );
@@ -51,6 +53,8 @@ void fused_moe_w8a8_up_down(
         int64_t block_n,
         int64_t warp_n,
         int64_t stages,
+        int64_t block_h,
+        int64_t block_w,
         double scaling_factor
 ) {
     const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
@@ -62,6 +66,28 @@ void fused_moe_w8a8_up_down(
     TORCH_CHECK((block_n == 64 && warp_n == 4) || (block_n == 32 && warp_n == 8));
     TORCH_CHECK(stages > 0 && stages < 6);
     TORCH_CHECK(block_m > 0 && block_m <= 128 && block_m%8 == 0);
+
+    // Validate block_shape
+    TORCH_CHECK((block_h == 128 && block_w == 128) || (block_h == 64 && block_w == 64),
+                "block_shape must be either (128, 128) or (64, 64), got (", block_h, ", ", block_w, ")");
+
+    // Validate dimensions are divisible by block_shape
+    TORCH_CHECK(x.size(1) % block_w == 0,
+                "K dimension (", x.size(1), ") must be divisible by block_w (", block_w, ")");
+    TORCH_CHECK(w.size(1) % block_h == 0,
+                "N dimension (", w.size(1), ") must be divisible by block_h (", block_h, ")");
+
+    // Validate scale tensor shapes match block_shape
+    TORCH_CHECK(x_scale.size(1) == x.size(1) / block_w,
+                "x_scale dimension mismatch: expected ", x.size(1) / block_w, " got ", x_scale.size(1));
+    TORCH_CHECK(w_scale.size(2) == w.size(2) / block_w,
+                "w_scale K dimension mismatch: expected ", w.size(2) / block_w, " got ", w_scale.size(2));
+    TORCH_CHECK(w_scale.size(1) == w.size(1) / block_h,
+                "w_scale N dimension mismatch: expected ", w.size(1) / block_h, " got ", w_scale.size(1));
+    TORCH_CHECK(w2_scale.size(2) == w2.size(2) / block_w,
+                "w2_scale width dimension mismatch: expected ", w2.size(2) / block_w, " got ", w2_scale.size(2));
+    TORCH_CHECK(w2_scale.size(1) == w2.size(1) / block_h,
+                "w2_scale height dimension mismatch: expected ", w2.size(1) / block_h, " got ", w2_scale.size(1));
 
     TORCH_CHECK(x.is_contiguous());
     TORCH_CHECK(w.is_contiguous());
@@ -97,6 +123,8 @@ void fused_moe_w8a8_up_down(
             static_cast<int>(block_n),
             static_cast<int>(warp_n),
             static_cast<int>(stages),
+            static_cast<int>(block_h),
+            static_cast<int>(block_w),
             static_cast<float>(scaling_factor),
             stream
     );
@@ -120,6 +148,8 @@ TORCH_LIBRARY_FRAGMENT(alpha_moe, m) {
             "int block_n, "
             "int warp_n, "
             "int stages, "
+            "int block_h, "
+            "int block_w, "
             "float scaling_factor"
             ") -> ()"
          );

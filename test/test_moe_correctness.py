@@ -45,9 +45,8 @@ def generate_topk_ids(num_experts, num_tokens, top_k, balancedness=1.0):
 
 
 def test_configuration(num_tokens, E, N, K, top_k, block_m, bn, wn, stages,
-                       atol=1e-2, rtol=1e-1):
+                       block_shape=[128, 128], atol=1e-2, rtol=1e-1):
     torch.manual_seed(42)
-    block_shape = [128, 128]
     routed_scaling_factor=2.5
 
     w1 = torch.randn((E, N, K)) * 50
@@ -98,7 +97,7 @@ def test_configuration(num_tokens, E, N, K, top_k, block_m, bn, wn, stages,
         x_q, x_scale, w1_swiglu, w1_scale_swiglu, w2, w2_scale,
         sorted_token_ids, expert_ids, num_tokens_post_padded,
         topk_weights, out, top_k,
-        block_m, bn, wn, stages, routed_scaling_factor
+        block_m, bn, wn, stages, block_shape[0], block_shape[1], routed_scaling_factor
     )
     # print(out[0, :10])
     # print(out_sglang[0, :10])
@@ -154,6 +153,12 @@ def parse_arguments():
                         default=1e-1,
                         help='Relative tolerance')
 
+    parser.add_argument('--block-shape',
+                        type=int,
+                        nargs=2,
+                        default=[128, 128],
+                        help='Block shape for quantization (height, width)')
+
     return parser.parse_args()
 
 
@@ -193,6 +198,7 @@ if __name__ == "__main__":
                             passed, mean_diff, max_diff = test_configuration(
                                 num_tokens, E, N, K, top_k,
                                 block_m, bn, wn, stages,
+                                block_shape=args.block_shape,
                                 atol=args.atol,
                                 rtol=args.rtol
                             )

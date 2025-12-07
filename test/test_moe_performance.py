@@ -115,6 +115,12 @@ def parse_arguments():
                         default=2.5,
                         help='Output scaling factor')
 
+    parser.add_argument('--block-shape',
+                        type=int,
+                        nargs=2,
+                        default=[128, 128],
+                        help='Block shape for quantization (height, width)')
+
     return parser.parse_args()
 
 
@@ -127,7 +133,7 @@ if __name__ == "__main__":
 
     hidden_size = args.K
     top_k = args.top_k + args.shared_expert
-    block_shape = [128, 128]
+    block_shape = args.block_shape
     E = args.E + args.shared_expert
     N = args.N
     K = args.K
@@ -223,7 +229,7 @@ if __name__ == "__main__":
                 x_q, x_scale, w1, w1_scale, w2, w2_scale,
                 sorted_token_ids, expert_ids, num_tokens_post_padded,
                 topk_weights, out, top_k,
-                block_m, bn, wn, stages, args.scaling_factor
+                block_m, bn, wn, stages, block_shape[0], block_shape[1], args.scaling_factor
             )
 
             alpha_time = bench_kineto(
@@ -231,7 +237,7 @@ if __name__ == "__main__":
                     x_q, x_scale, w1, w1_scale, w2, w2_scale,
                     sorted_token_ids, expert_ids, num_tokens_post_padded,
                     topk_weights, out, top_k,
-                    block_m, bn, wn, stages, args.scaling_factor
+                    block_m, bn, wn, stages, block_shape[0], block_shape[1], args.scaling_factor
                 )
             )
 
